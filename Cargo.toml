@@ -1,0 +1,17 @@
+[package]
+name = "GitAnalyser"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "GitAnalyser"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8.8"
+chrono = "0.4.44"
+clap = { version = "4.5.60", features = ["derive"] }
+git2 = "0.20.4"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.50.0", features = ["full"] }

@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitAnalyser Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; }
+        .card { background-color: #1e293b; border: 1px solid #334155; }
+    </style>
+</head>
+<body class="p-6">
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8 flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-bold text-blue-400">GitAnalyser</h1>
+                <p class="text-slate-400">Repository Productivity Metrics</p>
+            </div>
+            <div>
+                <label for="author-filter" class="mr-2 text-slate-300">Filter by Author:</label>
+                <select id="author-filter" class="bg-slate-800 text-white border border-slate-600 rounded p-2">
+                    <option value="all">Global (All Authors)</option>
+                </select>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <!-- Commit Frequency Chart -->
+            <div class="card p-4 rounded-lg shadow-lg">
+                <h2 class="text-xl font-semibold mb-4 text-slate-200">Commit Frequency</h2>
+                <canvas id="commitChart"></canvas>
+            </div>
+
+            <!-- Code Churn Chart -->
+            <div class="card p-4 rounded-lg shadow-lg">
+                <h2 class="text-xl font-semibold mb-4 text-slate-200">Code Churn (Lines Added/Deleted)</h2>
+                <canvas id="churnChart"></canvas>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- File Hotspots -->
+            <div class="card p-4 rounded-lg shadow-lg">
+                <h2 class="text-xl font-semibold mb-4 text-slate-200">File Hotspots</h2>
+                <div class="overflow-y-auto max-h-80">
+                    <table class="w-full text-left text-sm">
+                        <thead class="sticky top-0 bg-slate-800 text-slate-300">
+                            <tr>
+                                <th class="p-2">File</th>
+                                <th class="p-2 text-right">Modifications</th>
+                            </tr>
+                        </thead>
+                        <tbody id="hotspots-body" class="divide-y divide-slate-700">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Knowledge Silos -->
+            <div class="card p-4 rounded-lg shadow-lg">
+                <h2 class="text-xl font-semibold mb-4 text-slate-200">Knowledge Silos (>= 95% Ownership)</h2>
+                <div class="overflow-y-auto max-h-80">
+                    <table class="w-full text-left text-sm">
+                        <thead class="sticky top-0 bg-slate-800 text-slate-300">
+                            <tr>
+                                <th class="p-2">File</th>
+                                <th class="p-2">Author</th>
+                                <th class="p-2 text-right">Ownership</th>
+                            </tr>
+                        </thead>
+                        <tbody id="silos-body" class="divide-y divide-slate-700">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Branch Lifespan -->
+            <div class="card p-4 rounded-lg shadow-lg">
+                <h2 class="text-xl font-semibold mb-4 text-slate-200">Recent Merged Branch Lifespan</h2>
+                <div class="overflow-y-auto max-h-80">
+                    <table class="w-full text-left text-sm">
+                        <thead class="sticky top-0 bg-slate-800 text-slate-300">
+                            <tr>
+                                <th class="p-2">Merge Commit</th>
+                                <th class="p-2">Author</th>
+                                <th class="p-2 text-right">Duration</th>
+                            </tr>
+                        </thead>
+                        <tbody id="lifespan-body" class="divide-y divide-slate-700">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let globalMetrics = null;
+        let commitChartInstance = null;
+        let churnChartInstance = null;
+
+        async function fetchMetrics() {
+            const res = await fetch('/api/metrics');
+            globalMetrics = await res.json();
+
+            populateAuthors();
+            updateDashboard('all');
+        }
+
+        function populateAuthors() {
+            const authors = new Set(globalMetrics.commits.map(c => c.author));
+            const select = document.getElementById('author-filter');
+            authors.forEach(author => {
+                const opt = document.createElement('option');
+                opt.value = author;
+                opt.textContent = author;
+                select.appendChild(opt);
+            });
+
+            select.addEventListener('change', (e) => {
+                updateDashboard(e.target.value);
+            });
+        }
+
+        function updateDashboard(authorFilter) {
+            let commits = globalMetrics.commits;
+            let lifespans = globalMetrics.branch_lifespans;
+            let silos = globalMetrics.knowledge_silos;
+            let hotspots = globalMetrics.global_hotspots;
+
+            if (authorFilter !== 'all') {
+                commits = commits.filter(c => c.author === authorFilter);
+                lifespans = lifespans.filter(l => l.author === authorFilter);
+                silos = silos.filter(s => s.primary_author === authorFilter);
+                hotspots = globalMetrics.author_hotspots[authorFilter] || [];
+            }
+
+            // Reverse commits so oldest is first for time series
+            commits = [...commits].reverse();
+
+            updateCharts(commits);
+            updateHotspots(hotspots);
+            updateSilos(silos);
+            updateLifespans(lifespans);
+        }
+
+        function updateCharts(commits) {
+            // Group by day for charts
+            const groupedByDay = {};
+            commits.forEach(c => {
+                const day = c.date.split('T')[0];
+                if (!groupedByDay[day]) {
+                    groupedByDay[day] = { commits: 0, added: 0, deleted: 0 };
+                }
+                groupedByDay[day].commits += 1;
+                groupedByDay[day].added += c.lines_added;
+                groupedByDay[day].deleted += c.lines_deleted;
+            });
+
+            const labels = Object.keys(groupedByDay).sort();
+            const commitData = labels.map(l => groupedByDay[l].commits);
+            const addedData = labels.map(l => groupedByDay[l].added);
+            const deletedData = labels.map(l => groupedByDay[l].deleted);
+
+            if (commitChartInstance) commitChartInstance.destroy();
+            const ctxCommit = document.getElementById('commitChart').getContext('2d');
+            commitChartInstance = new Chart(ctxCommit, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Commits per Day',
+                        data: commitData,
+                        backgroundColor: 'rgba(59, 130, 246, 0.5)',
+                        borderColor: 'rgb(59, 130, 246)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'day' }, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
+                        y: { beginAtZero: true, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } }
+                    },
+                    plugins: { legend: { labels: { color: '#f8fafc' } } }
+                }
+            });
+
+            if (churnChartInstance) churnChartInstance.destroy();
+            const ctxChurn = document.getElementById('churnChart').getContext('2d');
+            churnChartInstance = new Chart(ctxChurn, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Lines Added',
+                            data: addedData,
+                            borderColor: 'rgb(34, 197, 94)',
+                            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                            fill: true,
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Lines Deleted',
+                            data: deletedData,
+                            borderColor: 'rgb(239, 68, 68)',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            fill: true,
+                            tension: 0.1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'day' }, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
+                        y: { beginAtZero: true, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } }
+                    },
+                    plugins: { legend: { labels: { color: '#f8fafc' } } }
+                }
+            });
+        }
+
+        function updateHotspots(hotspots) {
+            const tbody = document.getElementById('hotspots-body');
+            tbody.innerHTML = '';
+            hotspots.slice(0, 50).forEach(h => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td class="p-2 truncate max-w-[200px]" title="${h.file_path}">${h.file_path}</td>
+                                <td class="p-2 text-right text-blue-400">${h.modifications}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function updateSilos(silos) {
+            const tbody = document.getElementById('silos-body');
+            tbody.innerHTML = '';
+            silos.forEach(s => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td class="p-2 truncate max-w-[150px]" title="${s.file_path}">${s.file_path}</td>
+                                <td class="p-2">${s.primary_author}</td>
+                                <td class="p-2 text-right text-red-400 font-bold">${s.ownership_percentage.toFixed(1)}%</td>`;
+                tbody.appendChild(tr);
+            });
+            if (silos.length === 0) {
+                 tbody.innerHTML = `<tr><td colspan="3" class="p-2 text-center text-slate-500">No knowledge silos found for this selection.</td></tr>`;
+            }
+        }
+
+        function formatDuration(seconds) {
+            if (seconds < 60) return `${seconds}s`;
+            if (seconds < 3600) return `${Math.floor(seconds/60)}m`;
+            if (seconds < 86400) return `${Math.floor(seconds/3600)}h ${Math.floor((seconds%3600)/60)}m`;
+            return `${Math.floor(seconds/86400)}d ${Math.floor((seconds%86400)/3600)}h`;
+        }
+
+        function updateLifespans(lifespans) {
+            const tbody = document.getElementById('lifespan-body');
+            tbody.innerHTML = '';
+            // Show top 50 longest lifespans
+            let sorted = [...lifespans].sort((a,b) => b.duration_seconds - a.duration_seconds);
+            sorted.slice(0, 50).forEach(l => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td class="p-2 font-mono text-xs text-slate-400" title="${l.merge_commit}">${l.merge_commit.substring(0, 7)}</td>
+                                <td class="p-2">${l.author}</td>
+                                <td class="p-2 text-right text-yellow-400">${formatDuration(l.duration_seconds)}</td>`;
+                tbody.appendChild(tr);
+            });
+            if (sorted.length === 0) {
+                 tbody.innerHTML = `<tr><td colspan="3" class="p-2 text-center text-slate-500">No branch merges found for this selection.</td></tr>`;
+            }
+        }
+
+        fetchMetrics();
+    </script>
+</body>
+</html>
