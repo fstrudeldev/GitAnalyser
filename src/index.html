@@ -204,7 +204,7 @@
           <table class="w-full text-left text-sm">
             <thead class="text-gray-400 border-b border-gray-700">
               <tr>
-                <th class="pb-2 font-normal">File</th>
+                <th class="pb-2 font-normal">Folder</th>
                 <th class="pb-2 font-normal">Author</th>
                 <th class="pb-2 font-normal text-right">Ownership</th>
               </tr>
@@ -237,6 +237,16 @@
         </div>
         <!-- Bottom glowing accent -->
         <div class="absolute bottom-0 right-1/4 w-1/3 h-1 bg-cyan-400/20 blur-md rounded-full"></div>
+      </section>
+    </div>
+
+    <!-- Code Complexity Panel (Spans full width) -->
+    <div class="col-span-1 lg:col-span-2 mt-6">
+      <section class="glass-panel border-cyan-glow p-5 flex flex-col">
+        <h2 class="text-lg font-semibold text-white mb-4">Code Complexity by Folder (C#, JS, TS, Rust)</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="complexity-body">
+          <!-- Populated by JS -->
+        </div>
       </section>
     </div>
   </main>
@@ -283,6 +293,7 @@
       let lifespans = globalMetrics.branch_lifespans;
       let silos = globalMetrics.knowledge_silos;
       let hotspots = globalMetrics.global_hotspots;
+      let complexities = globalMetrics.folder_complexities;
 
       // Filter by Date
       if (dateFilter !== 'all' && commits.length > 0) {
@@ -314,6 +325,7 @@
       updateHotspots(hotspots);
       updateSilos(silos);
       updateLifespans(lifespans);
+      updateComplexities(complexities);
     }
 
     function updateCharts(commits) {
@@ -525,11 +537,65 @@
       silos.forEach(s => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td class="py-3 text-cyan-100 truncate max-w-[150px]" title="${s.file_path}">${s.file_path}</td>
+          <td class="py-3 text-cyan-100 truncate max-w-[150px]" title="${s.folder_path}">${s.folder_path}</td>
           <td class="py-3 text-gray-300">${s.primary_author}</td>
           <td class="py-3 text-right text-white font-mono">${s.ownership_percentage.toFixed(0)}%</td>
         `;
         tbody.appendChild(tr);
+      });
+    }
+
+    function updateComplexities(complexities) {
+      const container = document.getElementById('complexity-body');
+      container.innerHTML = '';
+
+      if (!complexities || complexities.length === 0) {
+        container.innerHTML = '<div class="col-span-full text-gray-500 text-sm italic py-4">No complexity data found (did not detect C#, JS, TS, or Rust files).</div>';
+        return;
+      }
+
+      const maxScore = complexities.reduce((max, c) => c.complexity_score > max ? c.complexity_score : max, 0);
+
+      // Only show top 12 to not overwhelm UI
+      complexities.slice(0, 12).forEach(c => {
+        const percentage = Math.max(5, (c.complexity_score / maxScore) * 100);
+
+        let gradientClass = 'from-cyan-400 to-blue-500';
+        let shadowClass = 'shadow-[0_0_5px_#00ccff]';
+        let iconColor = 'text-cyan-500';
+
+        if (percentage > 80) {
+          gradientClass = 'from-red-500 to-rose-600';
+          shadowClass = 'shadow-[0_0_5px_#f43f5e]';
+          iconColor = 'text-red-500';
+        } else if (percentage > 50) {
+          gradientClass = 'from-yellow-400 to-orange-500';
+          shadowClass = 'shadow-[0_0_5px_#f59e0b]';
+          iconColor = 'text-yellow-500';
+        } else if (percentage > 25) {
+          gradientClass = 'from-green-400 to-emerald-500';
+          shadowClass = 'shadow-[0_0_5px_#10b981]';
+          iconColor = 'text-green-500';
+        }
+
+        const div = document.createElement('div');
+        div.className = 'bg-gray-800/50 rounded-lg p-3 border border-gray-700/50 flex flex-col justify-between';
+        div.innerHTML = `
+          <div class="flex items-start gap-2 mb-2">
+            <svg class="w-5 h-5 ${iconColor} flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+            <span class="text-sm text-cyan-100 font-medium break-all" title="${c.folder_path}">${c.folder_path === '.' ? '(Root Directory)' : c.folder_path}</span>
+          </div>
+          <div class="flex flex-col mt-auto">
+            <div class="flex justify-between items-center mb-1">
+              <span class="text-xs text-gray-400">Score</span>
+              <span class="text-sm font-mono text-white">${c.complexity_score.toLocaleString()}</span>
+            </div>
+            <div class="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden">
+              <div class="h-full bg-gradient-to-r ${gradientClass} ${shadowClass}" style="width: ${percentage}%"></div>
+            </div>
+          </div>
+        `;
+        container.appendChild(div);
       });
     }
 

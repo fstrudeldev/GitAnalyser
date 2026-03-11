@@ -29,9 +29,15 @@ pub struct HotspotMetric {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct KnowledgeSilo {
-    pub file_path: String,
+    pub folder_path: String,
     pub primary_author: String,
     pub ownership_percentage: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FolderComplexity {
+    pub folder_path: String,
+    pub complexity_score: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -41,6 +47,7 @@ pub struct RepositoryMetrics {
     pub global_hotspots: Vec<HotspotMetric>,
     pub author_hotspots: HashMap<String, Vec<HotspotMetric>>,
     pub knowledge_silos: Vec<KnowledgeSilo>,
+    pub folder_complexities: Vec<FolderComplexity>,
 }
 
 pub fn analyze_repository(repo_path: &str) -> Result<RepositoryMetrics, git2::Error> {
@@ -144,42 +151,132 @@ pub fn analyze_repository(repo_path: &str) -> Result<RepositoryMetrics, git2::Er
         author_hotspots_sorted.insert(author, hotspots);
     }
 
-    // Knowledge Silos via blame
+    // Knowledge Silos by Folder via blame
     let mut knowledge_silos = Vec::new();
     if let Ok(head) = repo.head() {
         if let Ok(tree) = head.peel_to_tree() {
+            let mut folder_stats: HashMap<String, (usize, HashMap<String, usize>)> = HashMap::new();
+
             let mut paths = Vec::new();
             tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
-                if let Some(name) = entry.name() {
-                    paths.push(format!("{}{}", root, name));
+                if entry.kind() == Some(git2::ObjectType::Blob) {
+                    if let Some(name) = entry.name() {
+                        paths.push((root.to_string(), format!("{}{}", root, name)));
+                    }
                 }
                 git2::TreeWalkResult::Ok
             }).unwrap_or(());
 
-            for path in paths {
+            for (root_dir, path) in paths {
                 // Ignore errors for binary files or files not suited for blame
                 let mut blame_opts = BlameOptions::new();
                 if let Ok(blame) = repo.blame_file(Path::new(&path), Some(&mut blame_opts)) {
-                    let mut author_lines: HashMap<String, usize> = HashMap::new();
-                    let mut total_lines = 0;
+                    // Collect stats for this file
+                    let mut file_author_lines: HashMap<String, usize> = HashMap::new();
+                    let mut file_total_lines = 0;
 
                     for hunk in blame.iter() {
                         let author = hunk.final_signature().name().unwrap_or("Unknown").to_string();
                         let lines = hunk.lines_in_hunk();
-                        *author_lines.entry(author).or_insert(0) += lines;
-                        total_lines += lines;
+                        *file_author_lines.entry(author).or_insert(0) += lines;
+                        file_total_lines += lines;
                     }
 
-                    if total_lines > 0 {
-                        for (author, lines) in author_lines {
-                            let percentage = (lines as f64) / (total_lines as f64);
-                            if percentage >= 0.95 {
-                                knowledge_silos.push(KnowledgeSilo {
-                                    file_path: path.clone(),
-                                    primary_author: author,
-                                    ownership_percentage: percentage * 100.0,
-                                });
-                                break; // Only one author can have >= 95%
+                    if file_total_lines > 0 {
+                        // Attribute these lines to all parent directories of this file
+                        let mut current_dir = Path::new(&path).parent().unwrap_or(Path::new(""));
+                        loop {
+                            let dir_str = current_dir.to_str().unwrap_or("");
+                            let folder_key = if dir_str.is_empty() { ".".to_string() } else { dir_str.to_string() };
+
+                            let entry = folder_stats.entry(folder_key).or_insert_with(|| (0, HashMap::new()));
+                            entry.0 += file_total_lines;
+                            for (author, lines) in &file_author_lines {
+                                *entry.1.entry(author.clone()).or_insert(0) += lines;
+                            }
+
+                            if let Some(parent) = current_dir.parent() {
+                                if current_dir == Path::new("") {
+                                    break;
+                                }
+                                current_dir = parent;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Calculate silos based on folder stats
+            for (folder, (total_lines, author_lines)) in folder_stats {
+                if total_lines > 0 {
+                    for (author, lines) in author_lines {
+                        let percentage = (lines as f64) / (total_lines as f64);
+                        if percentage >= 0.95 {
+                            knowledge_silos.push(KnowledgeSilo {
+                                folder_path: folder.clone(),
+                                primary_author: author,
+                                ownership_percentage: percentage * 100.0,
+                            });
+                            break; // Only one author can have >= 95%
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let folder_complexities = calculate_folder_complexity(repo_path);
+
+    Ok(RepositoryMetrics {
+        commits,
+        branch_lifespans,
+        global_hotspots,
+        author_hotspots: author_hotspots_sorted,
+        knowledge_silos,
+        folder_complexities,
+    })
+}
+
+fn calculate_folder_complexity(repo_path: &str) -> Vec<FolderComplexity> {
+    let mut folder_scores: HashMap<String, usize> = HashMap::new();
+
+    // Walk the directory recursively
+    let walker = walkdir::WalkDir::new(repo_path).into_iter();
+    for entry in walker.filter_entry(|e| !e.path().to_string_lossy().contains(".git")) {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        if entry.file_type().is_file() {
+            let path = entry.path();
+            if let Some(ext) = path.extension() {
+                let ext_str = ext.to_string_lossy();
+                // Check if it's C#, JS, TS, or Rust
+                if ext_str == "cs" || ext_str == "js" || ext_str == "ts" || ext_str == "jsx" || ext_str == "tsx" || ext_str == "rs" {
+                    if let Ok(content) = std::fs::read_to_string(path) {
+                        let score = calculate_heuristic_complexity(&content);
+                        if score > 0 {
+                            // Find relative path to repo root
+                            let rel_path = path.strip_prefix(repo_path).unwrap_or(path);
+                            let mut current_dir = rel_path.parent().unwrap_or(Path::new(""));
+
+                            loop {
+                                let dir_str = current_dir.to_str().unwrap_or("");
+                                let folder_key = if dir_str.is_empty() { ".".to_string() } else { dir_str.to_string() };
+
+                                *folder_scores.entry(folder_key).or_insert(0) += score;
+
+                                if let Some(parent) = current_dir.parent() {
+                                    if current_dir == Path::new("") {
+                                        break;
+                                    }
+                                    current_dir = parent;
+                                } else {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -188,11 +285,64 @@ pub fn analyze_repository(repo_path: &str) -> Result<RepositoryMetrics, git2::Er
         }
     }
 
-    Ok(RepositoryMetrics {
-        commits,
-        branch_lifespans,
-        global_hotspots,
-        author_hotspots: author_hotspots_sorted,
-        knowledge_silos,
-    })
+    let mut complexities: Vec<FolderComplexity> = folder_scores
+        .into_iter()
+        .map(|(folder_path, complexity_score)| FolderComplexity {
+            folder_path,
+            complexity_score,
+        })
+        .collect();
+
+    complexities.sort_by(|a, b| b.complexity_score.cmp(&a.complexity_score));
+    complexities
+}
+
+fn calculate_heuristic_complexity(content: &str) -> usize {
+    let mut score = 0;
+
+    // Very basic regex-based keyword matching that tries to avoid comments and strings
+    // In a production scenario, you'd want a slightly more robust state machine or regex
+    let keywords = [
+        "if", "while", "for", "switch", "case", "catch", "match"
+    ];
+
+    let mut in_block_comment = false;
+
+    for line in content.lines() {
+        let mut trimmed = line.trim();
+
+        // Handle block comments (simple heuristic)
+        if in_block_comment {
+            if let Some(end_idx) = trimmed.find("*/") {
+                in_block_comment = false;
+                trimmed = &trimmed[end_idx + 2..];
+            } else {
+                continue;
+            }
+        } else if let Some(start_idx) = trimmed.find("/*") {
+            in_block_comment = true;
+            trimmed = &trimmed[..start_idx];
+        }
+
+        // Handle line comments
+        if let Some(idx) = trimmed.find("//") {
+            trimmed = &trimmed[..idx];
+        }
+
+        // Count operators (&&, ||, ?)
+        score += trimmed.matches("&&").count();
+        score += trimmed.matches("||").count();
+        score += trimmed.matches("?").count();
+
+        // Count keywords
+        // We use split_whitespace and check if the keyword exactly matches
+        // or starts with it followed by '(' to avoid partial matches like 'shift' or 'formatting'
+        for token in trimmed.split(|c: char| !c.is_alphanumeric() && c != '_') {
+            if keywords.contains(&token) {
+                score += 1;
+            }
+        }
+    }
+
+    score
 }
