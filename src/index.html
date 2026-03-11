@@ -1,284 +1,549 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GitAnalyser Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
-    <style>
-        body { background-color: #0f172a; color: #f8fafc; }
-        .card { background-color: #1e293b; border: 1px solid #334155; }
-    </style>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <title>GitAnalyser Dashboard</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <style data-purpose="custom-neon-styles">
+    body {
+      background-color: #0b192c;
+      background-image: radial-gradient(circle at top left, #0b192c, #040d1a);
+      color: #e6edf3;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    .glass-panel {
+      background: rgba(13, 24, 38, 0.6);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.5), 0 4px 6px rgba(0, 0, 0, 0.3);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Cyan Neon Glow */
+    .border-cyan-glow {
+      border: 1px solid rgba(0, 204, 255, 0.3);
+      box-shadow: 0 0 15px rgba(0, 204, 255, 0.1), inset 0 0 10px rgba(0, 204, 255, 0.05);
+    }
+    .border-cyan-glow::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 4px; height: 30px;
+      background: #00ccff;
+      box-shadow: 0 0 10px #00ccff, 0 0 20px #00ccff;
+      border-radius: 4px 0 0 0;
+    }
+
+    /* Green Neon Glow */
+    .border-green-glow {
+      border: 1px solid rgba(0, 255, 128, 0.3);
+      box-shadow: 0 0 15px rgba(0, 255, 128, 0.1), inset 0 0 10px rgba(0, 255, 128, 0.05);
+    }
+    .border-green-glow::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 4px; height: 30px;
+      background: #00ff80;
+      box-shadow: 0 0 10px #00ff80, 0 0 20px #00ff80;
+      border-radius: 4px 0 0 0;
+    }
+
+    /* Cyan Text Glow */
+    .text-cyan-glow {
+      color: #00ccff;
+      text-shadow: 0 0 8px rgba(0, 204, 255, 0.8);
+    }
+
+    /* Green Text Glow */
+    .text-green-glow {
+      color: #00ff80;
+      text-shadow: 0 0 5px rgba(0, 255, 128, 0.5);
+    }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(0, 204, 255, 0.3);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(0, 204, 255, 0.6);
+    }
+
+    /* Circuitry Background Pattern (faint) */
+    .bg-circuitry {
+      background-image: url('data:image/svg+xml;utf8,<svg height="100" viewbox="0 0 100 100" width="100" xmlns="http://www.w3.org/2000/svg"><path d="M10 10h20v20H10zM40 40h20v20H40zM70 70h20v20H70z" fill="none" stroke="rgba(0,204,255,0.02)" stroke-width="1"></path></svg>');
+    }
+  </style>
 </head>
-<body class="p-6">
-    <div class="max-w-7xl mx-auto">
-        <header class="mb-8 flex justify-between items-center">
-            <div>
-                <h1 class="text-3xl font-bold text-blue-400">GitAnalyser</h1>
-                <p class="text-slate-400">Repository Productivity Metrics</p>
-            </div>
-            <div>
-                <label for="author-filter" class="mr-2 text-slate-300">Filter by Author:</label>
-                <select id="author-filter" class="bg-slate-800 text-white border border-slate-600 rounded p-2">
-                    <option value="all">Global (All Authors)</option>
-                </select>
-            </div>
-        </header>
-
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-            <!-- Commit Frequency Chart -->
-            <div class="card p-4 rounded-lg shadow-lg">
-                <h2 class="text-xl font-semibold mb-4 text-slate-200">Commit Frequency</h2>
-                <canvas id="commitChart"></canvas>
-            </div>
-
-            <!-- Code Churn Chart -->
-            <div class="card p-4 rounded-lg shadow-lg">
-                <h2 class="text-xl font-semibold mb-4 text-slate-200">Code Churn (Lines Added/Deleted)</h2>
-                <canvas id="churnChart"></canvas>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <!-- File Hotspots -->
-            <div class="card p-4 rounded-lg shadow-lg">
-                <h2 class="text-xl font-semibold mb-4 text-slate-200">File Hotspots</h2>
-                <div class="overflow-y-auto max-h-80">
-                    <table class="w-full text-left text-sm">
-                        <thead class="sticky top-0 bg-slate-800 text-slate-300">
-                            <tr>
-                                <th class="p-2">File</th>
-                                <th class="p-2 text-right">Modifications</th>
-                            </tr>
-                        </thead>
-                        <tbody id="hotspots-body" class="divide-y divide-slate-700">
-                            <!-- Populated by JS -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Knowledge Silos -->
-            <div class="card p-4 rounded-lg shadow-lg">
-                <h2 class="text-xl font-semibold mb-4 text-slate-200">Knowledge Silos (>= 95% Ownership)</h2>
-                <div class="overflow-y-auto max-h-80">
-                    <table class="w-full text-left text-sm">
-                        <thead class="sticky top-0 bg-slate-800 text-slate-300">
-                            <tr>
-                                <th class="p-2">File</th>
-                                <th class="p-2">Author</th>
-                                <th class="p-2 text-right">Ownership</th>
-                            </tr>
-                        </thead>
-                        <tbody id="silos-body" class="divide-y divide-slate-700">
-                            <!-- Populated by JS -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Branch Lifespan -->
-            <div class="card p-4 rounded-lg shadow-lg">
-                <h2 class="text-xl font-semibold mb-4 text-slate-200">Recent Merged Branch Lifespan</h2>
-                <div class="overflow-y-auto max-h-80">
-                    <table class="w-full text-left text-sm">
-                        <thead class="sticky top-0 bg-slate-800 text-slate-300">
-                            <tr>
-                                <th class="p-2">Merge Commit</th>
-                                <th class="p-2">Author</th>
-                                <th class="p-2 text-right">Duration</th>
-                            </tr>
-                        </thead>
-                        <tbody id="lifespan-body" class="divide-y divide-slate-700">
-                            <!-- Populated by JS -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
+<body class="min-h-screen p-6 bg-circuitry relative overflow-x-hidden">
+  <!-- BEGIN: Header -->
+  <header class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 relative z-10">
+    <div class="flex items-center gap-4 mb-4 md:mb-0">
+      <!-- Logo Icon (Git Branching) -->
+      <div class="w-12 h-12 bg-gradient-to-br from-cyan-400 to-blue-600 rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(0,204,255,0.4)] transform rotate-45">
+        <svg class="w-6 h-6 text-white transform -rotate-45" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+          <circle cx="8" cy="17" fill="currentColor" r="2"></circle>
+          <circle cx="18" cy="15" fill="currentColor" r="2"></circle>
+          <circle cx="14" cy="7" fill="currentColor" r="2"></circle>
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-3xl font-bold text-white tracking-wide">
+          <div class="flex items-center gap-2">
+            <svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+              <circle cx="8" cy="17" fill="currentColor" r="2"></circle>
+              <circle cx="18" cy="15" fill="currentColor" r="2"></circle>
+              <circle cx="14" cy="7" fill="currentColor" r="2"></circle>
+            </svg>
+            <span class="text-cyan-glow">GitAnalyser</span>
+          </div>
+        </h1>
+        <p class="text-gray-400 text-sm mt-1">Repository Productivity Metrics</p>
+      </div>
     </div>
+    <div class="flex items-center gap-3">
+      <span class="text-gray-400 text-sm">Filter by Author:</span>
+      <div class="relative">
+        <select id="author-filter" class="appearance-none bg-blue-900/30 border border-cyan-500/50 text-cyan-100 py-2 pl-4 pr-10 rounded-full focus:outline-none focus:ring-2 focus:ring-cyan-500 shadow-[0_0_10px_rgba(0,204,255,0.2)]">
+          <option value="all">Global (All Authors)</option>
+        </select>
+        <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-cyan-500">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+        </div>
+      </div>
+    </div>
+  </header>
+  <!-- END: Header -->
 
-    <script>
-        let globalMetrics = null;
-        let commitChartInstance = null;
-        let churnChartInstance = null;
+  <!-- BEGIN: Main Content Layout -->
+  <main class="grid grid-cols-1 lg:grid-cols-2 gap-6 relative z-10">
+    <!-- Top Row -->
+    <!-- Commit Frequency Panel -->
+    <section class="glass-panel border-cyan-glow p-5 flex flex-col h-80">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-lg font-semibold text-white">Commit Frequency</h2>
+        <div class="flex items-center gap-2 text-xs">
+          <span class="w-3 h-1 bg-cyan-400 rounded-full shadow-[0_0_5px_#00ccff]"></span>
+          <span class="text-gray-300">Commits per Day</span>
+        </div>
+      </div>
+      <!-- Chart Area -->
+      <div class="flex-1 relative border-b border-l border-gray-700/50">
+        <canvas id="commitChart" class="absolute inset-0 w-full h-full z-10"></canvas>
+      </div>
+    </section>
 
-        async function fetchMetrics() {
-            const res = await fetch('/api/metrics');
-            globalMetrics = await res.json();
+    <!-- Code Churn Panel -->
+    <section class="glass-panel border-green-glow p-5 flex flex-col h-80">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-lg font-semibold text-white">Code Churn (Lines Added/Deleted)</h2>
+        <div class="flex items-center gap-4 text-xs">
+          <div class="flex items-center gap-1">
+            <span class="w-3 h-1 bg-green-400 rounded-full shadow-[0_0_5px_#00ff80]"></span>
+            <span class="text-gray-300">Lines Added</span>
+          </div>
+          <div class="flex items-center gap-1">
+            <span class="w-3 h-1 bg-red-400 rounded-full shadow-[0_0_5px_#ff4d4d]"></span>
+            <span class="text-gray-300">Lines Deleted</span>
+          </div>
+        </div>
+      </div>
+      <!-- Chart Area -->
+      <div class="flex-1 relative border-b border-l border-gray-700/50">
+        <canvas id="churnChart" class="absolute inset-0 w-full h-full z-10"></canvas>
+      </div>
+    </section>
 
-            populateAuthors();
-            updateDashboard('all');
+    <!-- Bottom Row (Spans full width, contains 3 columns) -->
+    <div class="col-span-1 lg:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-6">
+      <!-- File Hotspots Panel -->
+      <section class="glass-panel border-cyan-glow p-5 flex flex-col">
+        <h2 class="text-lg font-semibold text-white mb-4">File Hotspots</h2>
+        <div class="flex-1 overflow-y-auto pr-2 space-y-3" id="hotspots-body">
+          <!-- Populated by JS -->
+        </div>
+      </section>
+
+      <!-- Knowledge Silos Panel -->
+      <section class="glass-panel border-green-glow p-5 flex flex-col relative pb-8">
+        <h2 class="text-lg font-semibold text-white mb-4">Knowledge Silos (&gt;= 95% Ownership)</h2>
+        <div class="w-full overflow-x-auto flex-1">
+          <table class="w-full text-left text-sm">
+            <thead class="text-gray-400 border-b border-gray-700">
+              <tr>
+                <th class="pb-2 font-normal">File</th>
+                <th class="pb-2 font-normal">Author</th>
+                <th class="pb-2 font-normal text-right">Ownership</th>
+              </tr>
+            </thead>
+            <tbody id="silos-body" class="divide-y divide-gray-800/50">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+        <!-- Bottom glowing accent for visual balance -->
+        <div class="absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1/2 h-1 bg-green-400/20 blur-md rounded-full"></div>
+      </section>
+
+      <!-- Recent Merged Branch Lifespan Panel -->
+      <section class="glass-panel border-cyan-glow p-5 flex flex-col relative pb-8">
+        <h2 class="text-lg font-semibold text-white mb-4">Recent Merged Branch Lifespan</h2>
+        <div class="w-full overflow-x-auto flex-1">
+          <table class="w-full text-left text-sm">
+            <thead class="text-gray-400 border-b border-gray-700">
+              <tr>
+                <th class="pb-2 font-normal">Merge Commit</th>
+                <th class="pb-2 font-normal">Author</th>
+                <th class="pb-2 font-normal text-right">Duration</th>
+              </tr>
+            </thead>
+            <tbody id="lifespan-body" class="divide-y divide-gray-800/50">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+        <!-- Bottom glowing accent -->
+        <div class="absolute bottom-0 right-1/4 w-1/3 h-1 bg-cyan-400/20 blur-md rounded-full"></div>
+      </section>
+    </div>
+  </main>
+  <!-- END: Main Content Layout -->
+
+  <script>
+    let globalMetrics = null;
+    let commitChartInstance = null;
+    let churnChartInstance = null;
+
+    async function fetchMetrics() {
+      const res = await fetch('/api/metrics');
+      globalMetrics = await res.json();
+
+      populateAuthors();
+      updateDashboard('all');
+    }
+
+    function populateAuthors() {
+      const authors = new Set(globalMetrics.commits.map(c => c.author));
+      const select = document.getElementById('author-filter');
+      authors.forEach(author => {
+        const opt = document.createElement('option');
+        opt.value = author;
+        opt.textContent = author;
+        select.appendChild(opt);
+      });
+
+      select.addEventListener('change', (e) => {
+        updateDashboard(e.target.value);
+      });
+    }
+
+    function updateDashboard(authorFilter) {
+      let commits = globalMetrics.commits;
+      let lifespans = globalMetrics.branch_lifespans;
+      let silos = globalMetrics.knowledge_silos;
+      let hotspots = globalMetrics.global_hotspots;
+
+      if (authorFilter !== 'all') {
+        commits = commits.filter(c => c.author === authorFilter);
+        lifespans = lifespans.filter(l => l.author === authorFilter);
+        silos = silos.filter(s => s.primary_author === authorFilter);
+        hotspots = globalMetrics.author_hotspots[authorFilter] || [];
+      }
+
+      // Reverse commits so oldest is first for time series
+      commits = [...commits].reverse();
+
+      updateCharts(commits);
+      updateHotspots(hotspots);
+      updateSilos(silos);
+      updateLifespans(lifespans);
+    }
+
+    function updateCharts(commits) {
+      // Group by day for charts
+      const groupedByDay = {};
+      commits.forEach(c => {
+        const day = c.date.split('T')[0];
+        if (!groupedByDay[day]) {
+          groupedByDay[day] = { commits: 0, added: 0, deleted: 0 };
         }
+        groupedByDay[day].commits += 1;
+        groupedByDay[day].added += c.lines_added;
+        groupedByDay[day].deleted += c.lines_deleted;
+      });
 
-        function populateAuthors() {
-            const authors = new Set(globalMetrics.commits.map(c => c.author));
-            const select = document.getElementById('author-filter');
-            authors.forEach(author => {
-                const opt = document.createElement('option');
-                opt.value = author;
-                opt.textContent = author;
-                select.appendChild(opt);
-            });
+      const labels = Object.keys(groupedByDay).sort();
+      const commitData = labels.map(l => groupedByDay[l].commits);
+      const addedData = labels.map(l => groupedByDay[l].added);
+      const deletedData = labels.map(l => groupedByDay[l].deleted);
 
-            select.addEventListener('change', (e) => {
-                updateDashboard(e.target.value);
-            });
-        }
+      // Neon UI defaults and configuration for charts
+      Chart.defaults.color = '#6b7280';
+      Chart.defaults.font.family = "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif";
 
-        function updateDashboard(authorFilter) {
-            let commits = globalMetrics.commits;
-            let lifespans = globalMetrics.branch_lifespans;
-            let silos = globalMetrics.knowledge_silos;
-            let hotspots = globalMetrics.global_hotspots;
+      const gridColor = 'rgba(255, 255, 255, 0.05)';
 
-            if (authorFilter !== 'all') {
-                commits = commits.filter(c => c.author === authorFilter);
-                lifespans = lifespans.filter(l => l.author === authorFilter);
-                silos = silos.filter(s => s.primary_author === authorFilter);
-                hotspots = globalMetrics.author_hotspots[authorFilter] || [];
+      // Commit Frequency Chart
+      if (commitChartInstance) commitChartInstance.destroy();
+      const ctxCommit = document.getElementById('commitChart').getContext('2d');
+
+      // Create gradient for Commit Frequency
+      let gradientCyan = ctxCommit.createLinearGradient(0, 0, 0, 400);
+      gradientCyan.addColorStop(0, 'rgba(0, 204, 255, 0.4)');
+      gradientCyan.addColorStop(1, 'rgba(0, 204, 255, 0.0)');
+
+      commitChartInstance = new Chart(ctxCommit, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Commits per Day',
+            data: commitData,
+            borderColor: '#00ccff',
+            backgroundColor: gradientCyan,
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4,
+            pointBackgroundColor: '#ffffff',
+            pointBorderColor: '#00ccff',
+            pointBorderWidth: 2,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(13, 24, 38, 0.9)',
+              titleColor: '#00ccff',
+              bodyColor: '#e6edf3',
+              borderColor: 'rgba(0, 204, 255, 0.3)',
+              borderWidth: 1,
+              padding: 10,
+              displayColors: false,
             }
-
-            // Reverse commits so oldest is first for time series
-            commits = [...commits].reverse();
-
-            updateCharts(commits);
-            updateHotspots(hotspots);
-            updateSilos(silos);
-            updateLifespans(lifespans);
-        }
-
-        function updateCharts(commits) {
-            // Group by day for charts
-            const groupedByDay = {};
-            commits.forEach(c => {
-                const day = c.date.split('T')[0];
-                if (!groupedByDay[day]) {
-                    groupedByDay[day] = { commits: 0, added: 0, deleted: 0 };
-                }
-                groupedByDay[day].commits += 1;
-                groupedByDay[day].added += c.lines_added;
-                groupedByDay[day].deleted += c.lines_deleted;
-            });
-
-            const labels = Object.keys(groupedByDay).sort();
-            const commitData = labels.map(l => groupedByDay[l].commits);
-            const addedData = labels.map(l => groupedByDay[l].added);
-            const deletedData = labels.map(l => groupedByDay[l].deleted);
-
-            if (commitChartInstance) commitChartInstance.destroy();
-            const ctxCommit = document.getElementById('commitChart').getContext('2d');
-            commitChartInstance = new Chart(ctxCommit, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Commits per Day',
-                        data: commitData,
-                        backgroundColor: 'rgba(59, 130, 246, 0.5)',
-                        borderColor: 'rgb(59, 130, 246)',
-                        borderWidth: 1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    scales: {
-                        x: { type: 'time', time: { unit: 'day' }, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
-                        y: { beginAtZero: true, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } }
-                    },
-                    plugins: { legend: { labels: { color: '#f8fafc' } } }
-                }
-            });
-
-            if (churnChartInstance) churnChartInstance.destroy();
-            const ctxChurn = document.getElementById('churnChart').getContext('2d');
-            churnChartInstance = new Chart(ctxChurn, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        {
-                            label: 'Lines Added',
-                            data: addedData,
-                            borderColor: 'rgb(34, 197, 94)',
-                            backgroundColor: 'rgba(34, 197, 94, 0.1)',
-                            fill: true,
-                            tension: 0.1
-                        },
-                        {
-                            label: 'Lines Deleted',
-                            data: deletedData,
-                            borderColor: 'rgb(239, 68, 68)',
-                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                            fill: true,
-                            tension: 0.1
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    scales: {
-                        x: { type: 'time', time: { unit: 'day' }, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
-                        y: { beginAtZero: true, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } }
-                    },
-                    plugins: { legend: { labels: { color: '#f8fafc' } } }
-                }
-            });
-        }
-
-        function updateHotspots(hotspots) {
-            const tbody = document.getElementById('hotspots-body');
-            tbody.innerHTML = '';
-            hotspots.slice(0, 50).forEach(h => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td class="p-2 truncate max-w-[200px]" title="${h.file_path}">${h.file_path}</td>
-                                <td class="p-2 text-right text-blue-400">${h.modifications}</td>`;
-                tbody.appendChild(tr);
-            });
-        }
-
-        function updateSilos(silos) {
-            const tbody = document.getElementById('silos-body');
-            tbody.innerHTML = '';
-            silos.forEach(s => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td class="p-2 truncate max-w-[150px]" title="${s.file_path}">${s.file_path}</td>
-                                <td class="p-2">${s.primary_author}</td>
-                                <td class="p-2 text-right text-red-400 font-bold">${s.ownership_percentage.toFixed(1)}%</td>`;
-                tbody.appendChild(tr);
-            });
-            if (silos.length === 0) {
-                 tbody.innerHTML = `<tr><td colspan="3" class="p-2 text-center text-slate-500">No knowledge silos found for this selection.</td></tr>`;
+          },
+          scales: {
+            x: {
+              type: 'time',
+              time: { unit: 'day' },
+              grid: { color: gridColor, drawBorder: false },
+              ticks: { color: '#9ca3af', font: { size: 10 } }
+            },
+            y: {
+              beginAtZero: true,
+              grid: { color: gridColor, drawBorder: false },
+              ticks: { color: '#9ca3af', font: { size: 10 }, stepSize: 5 }
             }
+          }
         }
+      });
 
-        function formatDuration(seconds) {
-            if (seconds < 60) return `${seconds}s`;
-            if (seconds < 3600) return `${Math.floor(seconds/60)}m`;
-            if (seconds < 86400) return `${Math.floor(seconds/3600)}h ${Math.floor((seconds%3600)/60)}m`;
-            return `${Math.floor(seconds/86400)}d ${Math.floor((seconds%86400)/3600)}h`;
-        }
+      // Code Churn Chart
+      if (churnChartInstance) churnChartInstance.destroy();
+      const ctxChurn = document.getElementById('churnChart').getContext('2d');
 
-        function updateLifespans(lifespans) {
-            const tbody = document.getElementById('lifespan-body');
-            tbody.innerHTML = '';
-            // Show top 50 longest lifespans
-            let sorted = [...lifespans].sort((a,b) => b.duration_seconds - a.duration_seconds);
-            sorted.slice(0, 50).forEach(l => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td class="p-2 font-mono text-xs text-slate-400" title="${l.merge_commit}">${l.merge_commit.substring(0, 7)}</td>
-                                <td class="p-2">${l.author}</td>
-                                <td class="p-2 text-right text-yellow-400">${formatDuration(l.duration_seconds)}</td>`;
-                tbody.appendChild(tr);
-            });
-            if (sorted.length === 0) {
-                 tbody.innerHTML = `<tr><td colspan="3" class="p-2 text-center text-slate-500">No branch merges found for this selection.</td></tr>`;
+      churnChartInstance = new Chart(ctxChurn, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Lines Added',
+              data: addedData,
+              borderColor: '#00ff80',
+              backgroundColor: 'transparent',
+              borderWidth: 2,
+              tension: 0.4,
+              pointRadius: 0,
+              pointHoverRadius: 5,
+              pointBackgroundColor: '#00ff80',
+            },
+            {
+              label: 'Lines Deleted',
+              data: deletedData,
+              borderColor: '#ff4d4d',
+              backgroundColor: 'transparent',
+              borderWidth: 2,
+              borderDash: [5, 5],
+              tension: 0.4,
+              pointRadius: 0,
+              pointHoverRadius: 5,
+              pointBackgroundColor: '#ff4d4d',
             }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              mode: 'index',
+              intersect: false,
+              backgroundColor: 'rgba(13, 24, 38, 0.9)',
+              titleColor: '#e6edf3',
+              bodyColor: '#e6edf3',
+              borderColor: 'rgba(255, 255, 255, 0.1)',
+              borderWidth: 1,
+              padding: 10,
+            }
+          },
+          scales: {
+            x: {
+              type: 'time',
+              time: { unit: 'day' },
+              grid: { color: gridColor, drawBorder: false },
+              ticks: { color: '#9ca3af', font: { size: 10 } }
+            },
+            y: {
+              beginAtZero: true,
+              grid: { color: gridColor, drawBorder: false },
+              ticks: { color: '#9ca3af', font: { size: 10 } }
+            }
+          }
+        }
+      });
+    }
+
+    function updateHotspots(hotspots) {
+      const container = document.getElementById('hotspots-body');
+      container.innerHTML = '';
+
+      if (!hotspots || hotspots.length === 0) {
+        container.innerHTML = '<div class="text-gray-500 text-sm italic text-center py-4">No hotspots found.</div>';
+        return;
+      }
+
+      const maxMods = Math.max(...hotspots.map(h => h.modifications));
+
+      hotspots.slice(0, 10).forEach(h => {
+        // Calculate gradient color and width based on modifications
+        const percentage = Math.max(5, (h.modifications / maxMods) * 100);
+        let gradientClass = 'from-cyan-400 to-blue-500';
+        let shadowClass = 'shadow-[0_0_5px_#00ccff]';
+
+        if (percentage > 80) {
+          gradientClass = 'from-red-500 to-rose-600';
+          shadowClass = 'shadow-[0_0_5px_#f43f5e]';
+        } else if (percentage > 50) {
+          gradientClass = 'from-yellow-400 to-orange-500';
+          shadowClass = 'shadow-[0_0_5px_#f59e0b]';
+        } else if (percentage > 25) {
+          gradientClass = 'from-green-400 to-emerald-500';
+          shadowClass = 'shadow-[0_0_5px_#10b981]';
         }
 
-        fetchMetrics();
-    </script>
+        const div = document.createElement('div');
+        div.className = 'flex items-center justify-between text-sm group';
+        div.innerHTML = `
+          <div class="flex items-center gap-2 text-cyan-100 truncate pr-2">
+            <svg class="w-4 h-4 text-cyan-500 opacity-70 flex-shrink-0" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+            <span class="truncate" title="${h.file_path}">${h.file_path}</span>
+          </div>
+          <div class="flex items-center gap-3 justify-end flex-shrink-0 pl-2">
+            <span class="text-gray-400 whitespace-nowrap text-xs">${h.modifications} Mods</span>
+            <div class="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden flex-shrink-0">
+              <div class="h-full bg-gradient-to-r ${gradientClass} w-full ${shadowClass}" style="width: ${percentage}%"></div>
+            </div>
+          </div>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    function updateSilos(silos) {
+      const tbody = document.getElementById('silos-body');
+      tbody.innerHTML = '';
+
+      if (!silos || silos.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-gray-500 italic text-sm">No knowledge silos found for this selection.</td></tr>`;
+        return;
+      }
+
+      silos.forEach(s => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="py-3 text-cyan-100 truncate max-w-[150px]" title="${s.file_path}">${s.file_path}</td>
+          <td class="py-3 text-gray-300">${s.primary_author}</td>
+          <td class="py-3 text-right text-white font-mono">${s.ownership_percentage.toFixed(0)}%</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function formatDuration(seconds) {
+      if (seconds < 60) return `${seconds}s`;
+      if (seconds < 3600) return `${Math.floor(seconds/60)}m`;
+      if (seconds < 86400) return `${Math.floor(seconds/3600)}h ${Math.floor((seconds%3600)/60)}m`;
+      return `${Math.floor(seconds/86400)}d ${Math.floor((seconds%86400)/3600)}h`;
+    }
+
+    function updateLifespans(lifespans) {
+      const tbody = document.getElementById('lifespan-body');
+      tbody.innerHTML = '';
+
+      let sorted = [...lifespans].sort((a,b) => b.duration_seconds - a.duration_seconds);
+
+      if (sorted.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-gray-500 italic text-sm">No branch merges found for this selection.</td></tr>`;
+        return;
+      }
+
+      const maxDuration = Math.max(...sorted.map(l => l.duration_seconds));
+
+      sorted.slice(0, 10).forEach(l => {
+        const percentage = Math.max(5, (l.duration_seconds / maxDuration) * 100);
+        let colorClass = 'bg-cyan-400';
+        let shadowClass = 'shadow-[0_0_5px_#00ccff]';
+
+        if (percentage > 80) {
+          colorClass = 'bg-red-500';
+          shadowClass = 'shadow-[0_0_5px_#ef4444]';
+        } else if (percentage > 50) {
+          colorClass = 'bg-yellow-400';
+          shadowClass = 'shadow-[0_0_5px_#facc15]';
+        } else if (percentage > 25) {
+          colorClass = 'bg-green-400';
+          shadowClass = 'shadow-[0_0_5px_#4ade80]';
+        }
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="py-2.5 text-cyan-100 truncate" title="${l.merge_commit}">${l.merge_commit.substring(0, 7)}</td>
+          <td class="py-2.5 text-gray-300 truncate max-w-[100px]" title="${l.author}">${l.author}</td>
+          <td class="py-2.5 flex items-center justify-end gap-2">
+            <span class="text-gray-400 text-xs whitespace-nowrap">${formatDuration(l.duration_seconds)}</span>
+            <div class="w-12 h-1.5 bg-gray-700 rounded-full overflow-hidden flex-shrink-0">
+              <div class="h-full ${colorClass} ${shadowClass}" style="width: ${percentage}%"></div>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    fetchMetrics();
+  </script>
 </body>
 </html>
