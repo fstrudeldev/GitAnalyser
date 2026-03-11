@@ -1,0 +1,47 @@
+.TH GitAnalyser 1 "October 2024" "GitAnalyser 1.0" "User Commands"
+.SH NAME
+GitAnalyser \- extract productivity metrics from git repositories and visualize them
+.SH SYNOPSIS
+.B GitAnalyser
+[\fB\-\-port\fR \fIPORT\fR] [\fB\-p\fR, \fB\-\-path\fR \fIPATH\fR] [\fB\-h\fR, \fB\-\-help\fR] [\fB\-V\fR, \fB\-\-version\fR]
+.SH DESCRIPTION
+.B GitAnalyser
+reads your local git repository's commit history and file structures to calculate important productivity and code-base metrics.
+It starts a local web server (defaulting to port 8080) and provides an interactive, neon-styled web dashboard where you can see:
+.PP
+.IP \(bu 2
+Commit frequency over time.
+.IP \(bu 2
+Code churn (lines added vs deleted).
+.IP \(bu 2
+File hotspots (files that are modified most often).
+.IP \(bu 2
+Knowledge silos (files primarily owned by a single author).
+.IP \(bu 2
+Branch lifespans.
+.PP
+You can filter these metrics globally or by individual author directly in the web dashboard.
+.SH OPTIONS
+.TP
+\fB\-\-port\fR \fIPORT\fR
+Port to run the web server on (default: 8080)
+.TP
+\fB\-p\fR, \fB\-\-path\fR \fIPATH\fR
+Path to the git repository folder (default: ./)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Prints detailed help information and examples.
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Prints the current version.
+.SH EXAMPLES
+.PP
+.B Analyze the current directory and start the web server on the default port (8080):
+.IP
+$ GitAnalyser
+.PP
+.B Analyze a specific repository folder and start the web server on port 3000:
+.IP
+$ GitAnalyser \-\-path /home/user/projects/my-repo \-\-port 3000
+.SH AUTHOR
+Google Labs Jules
