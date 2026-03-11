@@ -33,11 +33,11 @@
     .border-cyan-glow::before {
       content: '';
       position: absolute;
-      top: 0; left: 0;
-      width: 4px; height: 30px;
+      top: 0; left: 0; bottom: 0;
+      width: 4px;
       background: #00ccff;
       box-shadow: 0 0 10px #00ccff, 0 0 20px #00ccff;
-      border-radius: 4px 0 0 0;
+      border-radius: 4px 0 0 4px;
     }
 
     /* Green Neon Glow */
@@ -48,11 +48,11 @@
     .border-green-glow::before {
       content: '';
       position: absolute;
-      top: 0; left: 0;
-      width: 4px; height: 30px;
+      top: 0; left: 0; bottom: 0;
+      width: 4px;
       background: #00ff80;
       box-shadow: 0 0 10px #00ff80, 0 0 20px #00ff80;
-      border-radius: 4px 0 0 0;
+      border-radius: 4px 0 0 4px;
     }
 
     /* Cyan Text Glow */
@@ -118,14 +118,30 @@
         <p class="text-gray-400 text-sm mt-1">Repository Productivity Metrics</p>
       </div>
     </div>
-    <div class="flex items-center gap-3">
-      <span class="text-gray-400 text-sm">Filter by Author:</span>
-      <div class="relative">
-        <select id="author-filter" class="appearance-none bg-blue-900/30 border border-cyan-500/50 text-cyan-100 py-2 pl-4 pr-10 rounded-full focus:outline-none focus:ring-2 focus:ring-cyan-500 shadow-[0_0_10px_rgba(0,204,255,0.2)]">
-          <option value="all">Global (All Authors)</option>
-        </select>
-        <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-cyan-500">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+    <div class="flex items-center gap-6">
+      <div class="flex items-center gap-3">
+        <span class="text-gray-400 text-sm">Date Range:</span>
+        <div class="relative">
+          <select id="date-filter" class="appearance-none bg-blue-900/30 border border-cyan-500/50 text-cyan-100 py-2 pl-4 pr-10 rounded-full focus:outline-none focus:ring-2 focus:ring-cyan-500 shadow-[0_0_10px_rgba(0,204,255,0.2)]">
+            <option value="all">All Time</option>
+            <option value="7">Last 7 Days</option>
+            <option value="30">Last 30 Days</option>
+            <option value="90">Last 90 Days</option>
+          </select>
+          <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-cyan-500">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-gray-400 text-sm">Filter by Author:</span>
+        <div class="relative">
+          <select id="author-filter" class="appearance-none bg-blue-900/30 border border-cyan-500/50 text-cyan-100 py-2 pl-4 pr-10 rounded-full focus:outline-none focus:ring-2 focus:ring-cyan-500 shadow-[0_0_10px_rgba(0,204,255,0.2)]">
+            <option value="all">Global (All Authors)</option>
+          </select>
+          <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-cyan-500">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewbox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+          </div>
         </div>
       </div>
     </div>
@@ -236,7 +252,12 @@
       globalMetrics = await res.json();
 
       populateAuthors();
-      updateDashboard('all');
+
+      document.getElementById('date-filter').addEventListener('change', () => {
+        updateDashboard();
+      });
+
+      updateDashboard();
     }
 
     function populateAuthors() {
@@ -249,17 +270,36 @@
         select.appendChild(opt);
       });
 
-      select.addEventListener('change', (e) => {
-        updateDashboard(e.target.value);
+      select.addEventListener('change', () => {
+        updateDashboard();
       });
     }
 
-    function updateDashboard(authorFilter) {
+    function updateDashboard() {
+      const authorFilter = document.getElementById('author-filter').value;
+      const dateFilter = document.getElementById('date-filter').value;
+
       let commits = globalMetrics.commits;
       let lifespans = globalMetrics.branch_lifespans;
       let silos = globalMetrics.knowledge_silos;
       let hotspots = globalMetrics.global_hotspots;
 
+      // Filter by Date
+      if (dateFilter !== 'all' && commits.length > 0) {
+        const days = parseInt(dateFilter);
+        // Find the most recent commit date as our "now" reference point safely
+        const maxTimestamp = commits.reduce((max, c) => {
+            const time = new Date(c.date).getTime();
+            return time > max ? time : max;
+        }, 0);
+
+        // Calculate the cutoff timestamp (days * 24 * 60 * 60 * 1000 milliseconds)
+        const cutoffTimestamp = maxTimestamp - (days * 86400 * 1000);
+
+        commits = commits.filter(c => new Date(c.date).getTime() >= cutoffTimestamp);
+      }
+
+      // Filter by Author
       if (authorFilter !== 'all') {
         commits = commits.filter(c => c.author === authorFilter);
         lifespans = lifespans.filter(l => l.author === authorFilter);
@@ -267,7 +307,7 @@
         hotspots = globalMetrics.author_hotspots[authorFilter] || [];
       }
 
-      // Reverse commits so oldest is first for time series
+      // Reverse commits so oldest is first for time series charts
       commits = [...commits].reverse();
 
       updateCharts(commits);
@@ -435,7 +475,8 @@
         return;
       }
 
-      const maxMods = Math.max(...hotspots.map(h => h.modifications));
+      // Safe calculation for large arrays
+      const maxMods = hotspots.reduce((max, h) => h.modifications > max ? h.modifications : max, 0);
 
       hotspots.slice(0, 10).forEach(h => {
         // Calculate gradient color and width based on modifications
@@ -510,7 +551,8 @@
         return;
       }
 
-      const maxDuration = Math.max(...sorted.map(l => l.duration_seconds));
+      // Safe max calculation: array is already sorted descending
+      const maxDuration = sorted[0].duration_seconds;
 
       sorted.slice(0, 10).forEach(l => {
         const percentage = Math.max(5, (l.duration_seconds / maxDuration) * 100);
