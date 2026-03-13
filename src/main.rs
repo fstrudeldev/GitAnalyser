@@ -40,6 +40,10 @@ pub struct Args {
     /// Path to the git repository folder
     #[arg(short, long, default_value = ".")]
     pub path: String,
+
+    /// Export the dashboard to a standalone HTML file instead of starting a web server
+    #[arg(short, long)]
+    pub output: Option<String>,
 }
 
 mod metrics;
@@ -62,6 +66,24 @@ async fn main() {
             std::process::exit(1);
         }
     };
+
+    if let Some(out_path) = args.output {
+        println!("Exporting dashboard to {}...", out_path);
+        let mut html = include_str!("index.html").to_string();
+
+        let metrics_json = serde_json::to_string(&metrics).unwrap();
+        let injection = format!("let globalMetrics = {};", metrics_json);
+
+        html = html.replace("let globalMetrics = null;", &injection);
+        html = html.replace("fetchMetrics();", "populateAuthors(); updateDashboard();");
+
+        if let Err(e) = std::fs::write(&out_path, html) {
+            eprintln!("Failed to write HTML output: {}", e);
+            std::process::exit(1);
+        }
+        println!("Export successful! You can now open {} in your browser.", out_path);
+        return;
+    }
 
     let app_state = Arc::new(metrics);
 
