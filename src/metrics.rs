@@ -1,5 +1,6 @@
 use chrono::{TimeZone, Utc};
-use git2::{Repository, BlameOptions};
+use git2::{Repository, BlameOptions, Oid};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -55,82 +56,128 @@ pub fn analyze_repository(repo_path: &str) -> Result<RepositoryMetrics, git2::Er
     let mut revwalk = repo.revwalk()?;
     revwalk.push_head()?;
 
+    let oids: Result<Vec<Oid>, git2::Error> = revwalk.collect();
+    let oids = oids?;
+
+    struct ChunkResult {
+        commits: Vec<CommitMetric>,
+        branch_lifespans: Vec<BranchLifespan>,
+        global_file_mods: HashMap<String, usize>,
+        author_file_mods: HashMap<String, HashMap<String, usize>>,
+    }
+
+    let chunk_size = (oids.len() / rayon::current_num_threads()).max(1);
+
+    let chunk_results: Vec<ChunkResult> = oids
+        .par_chunks(chunk_size)
+        .filter_map(|chunk| {
+            let thread_repo = Repository::open(repo_path).ok()?;
+            let mut chunk_commits = Vec::new();
+            let mut chunk_lifespans = Vec::new();
+            let mut chunk_global_mods = HashMap::new();
+            let mut chunk_author_mods: HashMap<String, HashMap<String, usize>> = HashMap::new();
+
+            for &oid in chunk {
+                let commit = match thread_repo.find_commit(oid) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+
+                let author = commit.author().name().unwrap_or("Unknown").to_string();
+                let timestamp = commit.time().seconds();
+                let date = Utc.timestamp_opt(timestamp, 0).unwrap().to_rfc3339();
+
+                let mut lines_added = 0;
+                let mut lines_deleted = 0;
+
+                let parents: Vec<_> = commit.parents().collect();
+                let parent_tree = if parents.len() > 0 {
+                    parents[0].tree().ok()
+                } else {
+                    None
+                };
+                let commit_tree = match commit.tree() {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+
+                let diff = thread_repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&commit_tree), None).ok();
+
+                let mut modified_files_in_commit = std::collections::HashSet::new();
+
+                if let Some(diff) = diff {
+                    let _ = diff.print(git2::DiffFormat::Patch, |delta, _hunk, line| {
+                        if let Some(path) = delta.new_file().path().and_then(|p| p.to_str()) {
+                            modified_files_in_commit.insert(path.to_string());
+                        }
+
+                        match line.origin() {
+                            '+' => lines_added += 1,
+                            '-' => lines_deleted += 1,
+                            _ => {}
+                        }
+                        true
+                    });
+                }
+
+                for path_str in modified_files_in_commit {
+                    *chunk_global_mods.entry(path_str.clone()).or_insert(0) += 1;
+                    *chunk_author_mods
+                        .entry(author.clone())
+                        .or_default()
+                        .entry(path_str)
+                        .or_insert(0) += 1;
+                }
+
+                chunk_commits.push(CommitMetric {
+                    hash: oid.to_string(),
+                    author: author.clone(),
+                    timestamp,
+                    date,
+                    lines_added,
+                    lines_deleted,
+                });
+
+                if parents.len() > 1 {
+                    if let Ok(base_oid) = thread_repo.merge_base(parents[0].id(), parents[1].id()) {
+                        if let Ok(base_commit) = thread_repo.find_commit(base_oid) {
+                            let duration = commit.time().seconds() - base_commit.time().seconds();
+                            chunk_lifespans.push(BranchLifespan {
+                                merge_commit: oid.to_string(),
+                                author: author.clone(),
+                                duration_seconds: duration,
+                            });
+                        }
+                    }
+                }
+            }
+
+            Some(ChunkResult {
+                commits: chunk_commits,
+                branch_lifespans: chunk_lifespans,
+                global_file_mods: chunk_global_mods,
+                author_file_mods: chunk_author_mods,
+            })
+        })
+        .collect();
+
     let mut commits = Vec::new();
     let mut branch_lifespans = Vec::new();
-
     let mut global_file_mods: HashMap<String, usize> = HashMap::new();
     let mut author_file_mods: HashMap<String, HashMap<String, usize>> = HashMap::new();
 
-    for oid in revwalk {
-        let oid = oid?;
-        let commit = repo.find_commit(oid)?;
+    for mut res in chunk_results {
+        commits.append(&mut res.commits);
+        branch_lifespans.append(&mut res.branch_lifespans);
 
-        let author = commit.author().name().unwrap_or("Unknown").to_string();
-        let timestamp = commit.time().seconds();
-        let date = Utc.timestamp_opt(timestamp, 0).unwrap().to_rfc3339();
-
-        let mut lines_added = 0;
-        let mut lines_deleted = 0;
-
-        let parents: Vec<_> = commit.parents().collect();
-        let parent_tree = if parents.len() > 0 {
-            Some(parents[0].tree()?)
-        } else {
-            None
-        };
-        let commit_tree = commit.tree()?;
-
-        let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&commit_tree), None)?;
-
-        // Track which files were modified in this specific commit to avoid overcounting
-        let mut modified_files_in_commit = std::collections::HashSet::new();
-
-        diff.print(git2::DiffFormat::Patch, |delta, _hunk, line| {
-            if let Some(path) = delta.new_file().path().and_then(|p| p.to_str()) {
-                modified_files_in_commit.insert(path.to_string());
-            }
-
-            match line.origin() {
-                '+' => lines_added += 1,
-                '-' => lines_deleted += 1,
-                _ => {}
-            }
-            true
-        })?;
-
-        for path_str in modified_files_in_commit {
-            *global_file_mods.entry(path_str.clone()).or_insert(0) += 1;
-            *author_file_mods
-                .entry(author.clone())
-                .or_default()
-                .entry(path_str)
-                .or_insert(0) += 1;
+        for (path, count) in res.global_file_mods {
+            *global_file_mods.entry(path).or_insert(0) += count;
         }
 
-        commits.push(CommitMetric {
-            hash: oid.to_string(),
-            author: author.clone(),
-            timestamp,
-            date,
-            lines_added,
-            lines_deleted,
-        });
-
-        // Branch lifespan calculation (merge commits)
-        if parents.len() > 1 {
-            // Very simplified branch lifespan estimation
-            // The oldest commit in the merged branch relative to the main branch
-            // This requires finding the merge base, which can be complex.
-            // For now, we will just find the oldest commit that is reachable from parent[1] but not parent[0].
-            if let Ok(base_oid) = repo.merge_base(parents[0].id(), parents[1].id()) {
-                if let Ok(base_commit) = repo.find_commit(base_oid) {
-                    let duration = commit.time().seconds() - base_commit.time().seconds();
-                    branch_lifespans.push(BranchLifespan {
-                        merge_commit: oid.to_string(),
-                        author: author.clone(),
-                        duration_seconds: duration,
-                    });
-                }
+        for (author, mods) in res.author_file_mods {
+            let author_entry = author_file_mods.entry(author).or_default();
+            for (path, count) in mods {
+                *author_entry.entry(path).or_insert(0) += count;
             }
         }
     }
@@ -155,8 +202,6 @@ pub fn analyze_repository(repo_path: &str) -> Result<RepositoryMetrics, git2::Er
     let mut knowledge_silos = Vec::new();
     if let Ok(head) = repo.head() {
         if let Ok(tree) = head.peel_to_tree() {
-            let mut folder_stats: HashMap<String, (usize, HashMap<String, usize>)> = HashMap::new();
-
             let mut paths = Vec::new();
             tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
                 if entry.kind() == Some(git2::ObjectType::Blob) {
@@ -167,49 +212,67 @@ pub fn analyze_repository(repo_path: &str) -> Result<RepositoryMetrics, git2::Er
                 git2::TreeWalkResult::Ok
             }).unwrap_or(());
 
-            for (root_dir, path) in paths {
-                // Ignore errors for binary files or files not suited for blame
-                let mut blame_opts = BlameOptions::new();
-                if let Ok(blame) = repo.blame_file(Path::new(&path), Some(&mut blame_opts)) {
-                    // Collect stats for this file
-                    let mut file_author_lines: HashMap<String, usize> = HashMap::new();
-                    let mut file_total_lines = 0;
+            let paths_chunk_size = (paths.len() / rayon::current_num_threads()).max(1);
 
-                    for hunk in blame.iter() {
-                        let author = hunk.final_signature().name().unwrap_or("Unknown").to_string();
-                        let lines = hunk.lines_in_hunk();
-                        *file_author_lines.entry(author).or_insert(0) += lines;
-                        file_total_lines += lines;
-                    }
+            let chunked_folder_stats: Vec<HashMap<String, (usize, HashMap<String, usize>)>> = paths
+                .par_chunks(paths_chunk_size)
+                .filter_map(|chunk| {
+                    let thread_repo = Repository::open(repo_path).ok()?;
+                    let mut chunk_folder_stats: HashMap<String, (usize, HashMap<String, usize>)> = HashMap::new();
 
-                    if file_total_lines > 0 {
-                        // Attribute these lines to all parent directories of this file
-                        let mut current_dir = Path::new(&path).parent().unwrap_or(Path::new(""));
-                        loop {
-                            let dir_str = current_dir.to_str().unwrap_or("");
-                            let folder_key = if dir_str.is_empty() { ".".to_string() } else { dir_str.to_string() };
+                    for (_root_dir, path) in chunk {
+                        let mut blame_opts = BlameOptions::new();
+                        if let Ok(blame) = thread_repo.blame_file(Path::new(path), Some(&mut blame_opts)) {
+                            let mut file_author_lines: HashMap<String, usize> = HashMap::new();
+                            let mut file_total_lines = 0;
 
-                            let entry = folder_stats.entry(folder_key).or_insert_with(|| (0, HashMap::new()));
-                            entry.0 += file_total_lines;
-                            for (author, lines) in &file_author_lines {
-                                *entry.1.entry(author.clone()).or_insert(0) += lines;
+                            for hunk in blame.iter() {
+                                let author = hunk.final_signature().name().unwrap_or("Unknown").to_string();
+                                let lines = hunk.lines_in_hunk();
+                                *file_author_lines.entry(author).or_insert(0) += lines;
+                                file_total_lines += lines;
                             }
 
-                            if let Some(parent) = current_dir.parent() {
-                                if current_dir == Path::new("") {
-                                    break;
+                            if file_total_lines > 0 {
+                                let mut current_dir = Path::new(path).parent().unwrap_or(Path::new(""));
+                                loop {
+                                    let dir_str = current_dir.to_str().unwrap_or("");
+                                    let folder_key = if dir_str.is_empty() { ".".to_string() } else { dir_str.to_string() };
+
+                                    let entry = chunk_folder_stats.entry(folder_key).or_insert_with(|| (0, HashMap::new()));
+                                    entry.0 += file_total_lines;
+                                    for (author, lines) in &file_author_lines {
+                                        *entry.1.entry(author.clone()).or_insert(0) += lines;
+                                    }
+
+                                    if let Some(parent) = current_dir.parent() {
+                                        if current_dir == Path::new("") {
+                                            break;
+                                        }
+                                        current_dir = parent;
+                                    } else {
+                                        break;
+                                    }
                                 }
-                                current_dir = parent;
-                            } else {
-                                break;
                             }
                         }
+                    }
+                    Some(chunk_folder_stats)
+                })
+                .collect();
+
+            let mut final_folder_stats: HashMap<String, (usize, HashMap<String, usize>)> = HashMap::new();
+            for chunk_stats in chunked_folder_stats {
+                for (folder_key, (total_lines, author_lines)) in chunk_stats {
+                    let entry = final_folder_stats.entry(folder_key).or_insert_with(|| (0, HashMap::new()));
+                    entry.0 += total_lines;
+                    for (author, lines) in author_lines {
+                        *entry.1.entry(author).or_insert(0) += lines;
                     }
                 }
             }
 
-            // Calculate silos based on folder stats
-            for (folder, (total_lines, author_lines)) in folder_stats {
+            for (folder, (total_lines, author_lines)) in final_folder_stats {
                 if total_lines > 0 {
                     for (author, lines) in author_lines {
                         let percentage = (lines as f64) / (total_lines as f64);
@@ -219,7 +282,7 @@ pub fn analyze_repository(repo_path: &str) -> Result<RepositoryMetrics, git2::Er
                                 primary_author: author,
                                 ownership_percentage: percentage * 100.0,
                             });
-                            break; // Only one author can have >= 95%
+                            break;
                         }
                     }
                 }
@@ -240,10 +303,10 @@ pub fn analyze_repository(repo_path: &str) -> Result<RepositoryMetrics, git2::Er
 }
 
 fn calculate_folder_complexity(repo_path: &str) -> Vec<FolderComplexity> {
-    let mut folder_scores: HashMap<String, usize> = HashMap::new();
-
-    // Walk the directory recursively
     let walker = walkdir::WalkDir::new(repo_path).into_iter();
+
+    let mut files_to_process = Vec::new();
+
     for entry in walker.filter_entry(|e| !e.path().to_string_lossy().contains(".git")) {
         let entry = match entry {
             Ok(e) => e,
@@ -254,38 +317,56 @@ fn calculate_folder_complexity(repo_path: &str) -> Vec<FolderComplexity> {
             let path = entry.path();
             if let Some(ext) = path.extension() {
                 let ext_str = ext.to_string_lossy();
-                // Check if it's C#, JS, TS, or Rust
                 if ext_str == "cs" || ext_str == "js" || ext_str == "ts" || ext_str == "jsx" || ext_str == "tsx" || ext_str == "rs" {
-                    if let Ok(content) = std::fs::read_to_string(path) {
-                        let score = calculate_heuristic_complexity(&content);
-                        if score > 0 {
-                            // Find relative path to repo root
-                            let rel_path = path.strip_prefix(repo_path).unwrap_or(path);
-                            let mut current_dir = rel_path.parent().unwrap_or(Path::new(""));
-
-                            loop {
-                                let dir_str = current_dir.to_str().unwrap_or("");
-                                let folder_key = if dir_str.is_empty() { ".".to_string() } else { dir_str.to_string() };
-
-                                *folder_scores.entry(folder_key).or_insert(0) += score;
-
-                                if let Some(parent) = current_dir.parent() {
-                                    if current_dir == Path::new("") {
-                                        break;
-                                    }
-                                    current_dir = parent;
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    files_to_process.push(path.to_path_buf());
                 }
             }
         }
     }
 
-    let mut complexities: Vec<FolderComplexity> = folder_scores
+    let folder_scores_chunks: Vec<HashMap<String, usize>> = files_to_process
+        .par_iter()
+        .filter_map(|path| {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                let score = calculate_heuristic_complexity(&content);
+                if score > 0 {
+                    let mut chunk_scores = HashMap::new();
+                    let rel_path = path.strip_prefix(repo_path).unwrap_or(path);
+                    let mut current_dir = rel_path.parent().unwrap_or(Path::new(""));
+
+                    loop {
+                        let dir_str = current_dir.to_str().unwrap_or("");
+                        let folder_key = if dir_str.is_empty() { ".".to_string() } else { dir_str.to_string() };
+
+                        *chunk_scores.entry(folder_key).or_insert(0) += score;
+
+                        if let Some(parent) = current_dir.parent() {
+                            if current_dir == Path::new("") {
+                                break;
+                            }
+                            current_dir = parent;
+                        } else {
+                            break;
+                        }
+                    }
+                    Some(chunk_scores)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let mut final_folder_scores: HashMap<String, usize> = HashMap::new();
+    for chunk in folder_scores_chunks {
+        for (folder, score) in chunk {
+            *final_folder_scores.entry(folder).or_insert(0) += score;
+        }
+    }
+
+    let mut complexities: Vec<FolderComplexity> = final_folder_scores
         .into_iter()
         .map(|(folder_path, complexity_score)| FolderComplexity {
             folder_path,
