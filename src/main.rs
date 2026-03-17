@@ -55,9 +55,11 @@ async fn main() {
     let args = Args::parse();
     println!("Analyzing repository at: {}", args.path);
 
+    let start_time = std::time::Instant::now();
     let metrics = match metrics::analyze_repository(&args.path) {
         Ok(metrics) => {
-            println!("Successfully analyzed repository!");
+            let duration = start_time.elapsed();
+            println!("Successfully analyzed repository in {:.2} seconds!", duration.as_secs_f64());
             println!("Found {} commits.", metrics.commits.len());
             metrics
         }
